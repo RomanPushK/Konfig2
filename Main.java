@@ -1,170 +1,183 @@
 package Konfig2;
 
-import java.io.File;
-import java.net.MalformedURLException;
-import java.net.URL;
+import java.io.*;
+import java.net.*;
+import java.util.*;
 import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.HashMap;
-import java.util.Map;
+import java.nio.file.Paths;
 
-/**
- * Stage 1: Minimal CLI prototype for dependency-graph visualizer.
- *
- * Supported options:
- *   --package, -p  <name>      : name of the analyzed package (required)
- *   --repo,    -r  <url|path>  : repository URL or path to test repo (required)
- *   --test,    -t [true|false] : enable test-repository mode (flag or value, default=false)
- *   --filter,  -f  <substring> : substring to filter package names (optional)
- *   --help,    -h             : show usage
- *
- * On launch the program prints all user-configurable parameters in key=value format.
- * Error handling is provided for all parameters.
- */
 public class Main {
 
     public static void main(String[] args) {
+        Config cfg = parseArgs(args);
+        if (cfg == null) return;
+
+        System.out.println("package=" + cfg.packageName);
+        System.out.println("repo=" + cfg.repo);
+        System.out.println("testMode=" + cfg.test);
+        System.out.println("filter=" + cfg.filter);
+
         try {
-            Map<String, String> params = parseArgs(args);
-            validateParams(params);
-            // Print parameters as key=value (requirement 3)
-            System.out.println("package=" + params.get("package"));
-            System.out.println("repo=" + params.get("repo"));
-            System.out.println("testMode=" + params.get("testMode"));
-            System.out.println("filter=" + (params.get("filter") == null ? "" : params.get("filter")));
-        } catch (IllegalArgumentException ex) {
-            System.err.println("Error: " + ex.getMessage());
-            System.err.println();
-            printUsage();
-            System.exit(2);
-        } catch (Exception ex) {
-            System.err.println("Unexpected error: " + ex.getMessage());
-            ex.printStackTrace(System.err);
-            System.exit(3);
+            List<AptPackage> packages = cfg.test
+                    ? loadLocal(cfg.repo)
+                    : loadRemote(cfg.repo);
+
+            Map<String, AptPackage> map = new HashMap<>();
+            for (AptPackage p : packages) map.put(p.name, p);
+
+            System.out.println();
+            System.out.println("=== Dependency Tree ===");
+
+            printTree(cfg.packageName, map, new HashSet<>(), 0, cfg.filter);
+
+        } catch (Exception e) {
+            System.err.println("Error: " + e.getMessage());
         }
     }
 
-    private static Map<String, String> parseArgs(String[] args) {
-        Map<String, String> params = new HashMap<>();
-        // defaults
-        params.put("testMode", "false");
+    public static class Config {
+        String packageName;
+        String repo;
+        boolean test = false;
+        String filter = "";
+    }
 
+    private static Config parseArgs(String[] args) {
+        Config c = new Config();
         for (int i = 0; i < args.length; i++) {
-            String a = args[i];
-            switch (a) {
+            switch (args[i]) {
+                case "--package": c.packageName = args[++i]; break;
+                case "--repo": c.repo = args[++i]; break;
+                case "--test": c.test = true; break;
+                case "--filter": c.filter = args[++i]; break;
                 case "--help":
-                case "-h":
-                    printUsage();
-                    System.exit(0);
-                case "--package":
-                case "-p":
-                    i = putNextArg(args, i, params, "package");
-                    break;
-                case "--repo":
-                case "-r":
-                    i = putNextArg(args, i, params, "repo");
-                    break;
-                case "--filter":
-                case "-f":
-                    i = putNextArg(args, i, params, "filter");
-                    break;
-                case "--test":
-                case "-t":
-                    // support both "--test" (flag) and "--test true/false"
-                    if (i + 1 < args.length && !args[i + 1].startsWith("-")) {
-                        String val = args[++i];
-                        params.put("testMode", String.valueOf(parseBooleanValue(val)));
-                    } else {
-                        params.put("testMode", "true");
-                    }
-                    break;
-                default:
-                    // unknown option or stray argument
-                    if (a.startsWith("-")) {
-                        throw new IllegalArgumentException("Unknown option: " + a);
-                    } else {
-                        throw new IllegalArgumentException("Unexpected argument: " + a);
-                    }
+                    System.out.println("Usage: java Main --package <name> --repo <url or file> [--test] [--filter x]");
+                    return null;
             }
         }
-
-        return params;
+        if (c.packageName == null || c.repo == null) {
+            System.err.println("Missing required params");
+            return null;
+        }
+        return c;
     }
 
-    private static int putNextArg(String[] args, int i, Map<String, String> params, String key) {
-        if (i + 1 >= args.length) {
-            throw new IllegalArgumentException("Missing value for option: " + args[i]);
-        }
-        String val = args[++i];
-        if (val.startsWith("-")) {
-            throw new IllegalArgumentException("Missing value for option: " + args[i - 1]);
-        }
-        params.put(key, val);
-        return i;
+    private static List<AptPackage> loadLocal(String path) throws IOException {
+        return parsePackages(new String(Files.readAllBytes(new File(path).toPath())));
     }
 
-    private static boolean parseBooleanValue(String val) {
-        if (val.equalsIgnoreCase("true") || val.equalsIgnoreCase("yes") || val.equals("1")) return true;
-        if (val.equalsIgnoreCase("false") || val.equalsIgnoreCase("no") || val.equals("0")) return false;
-        throw new IllegalArgumentException("Invalid boolean value: " + val + ". Expected true/false.");
+    private static List<AptPackage> loadRemote(String repoUrl) throws IOException {
+        String url = repoUrl.endsWith("Packages") ? repoUrl : repoUrl + "/Packages";
+        String data = new String(new URL(url).openStream().readAllBytes());
+        return parsePackages(data);
     }
 
-    private static void validateParams(Map<String, String> params) {
-        // package name required and non-empty
-        String pkg = params.get("package");
-        if (pkg == null || pkg.trim().isEmpty()) {
-            throw new IllegalArgumentException("Package name is required (--package <name>).\n");
-        }
+    public static class AptPackage {
+        String name;
+        List<String> depends = new ArrayList<>();
+    }
 
-        // repo required
-        String repo = params.get("repo");
-        if (repo == null || repo.trim().isEmpty()) {
-            throw new IllegalArgumentException("Repository URL or path is required (--repo <url|path>).\n");
-        }
+    private static List<AptPackage> parsePackages(String text) {
+        List<AptPackage> list = new ArrayList<>();
+        AptPackage current = null;
+        String dependsBuf = null;
 
-        // testMode must be boolean (already parsed) but check
-        String testModeStr = params.get("testMode");
-        boolean testMode = Boolean.parseBoolean(testModeStr);
-
-        if (testMode) {
-            // then repo should be a path to existing file or directory
-            Path p = Path.of(repo);
-            if (!Files.exists(p)) {
-                throw new IllegalArgumentException("Test mode is enabled but repository path does not exist: " + repo);
-            }
-        } else {
-            // non-test mode -> expect valid URL
-            try {
-                // allow URLs like http(s) and file: but prefer http(s)
-                URL u = new URL(repo);
-                String proto = u.getProtocol();
-                if (!proto.equals("http") && !proto.equals("https") && !proto.equals("file")) {
-                    throw new IllegalArgumentException("Repository URL must use http(s) protocol (or file: for local). Given: " + proto);
+        for (String line : text.split("\n")) {
+            line = line.trim();
+            if (line.isEmpty()) {
+                if (current != null) {
+                    if (dependsBuf != null) {
+                        current.depends = parseDependencies(dependsBuf);
+                    }
+                    list.add(current);
                 }
-            } catch (MalformedURLException e) {
-                throw new IllegalArgumentException("Invalid repository URL: " + repo + ". If you want to use a local path in test mode, enable --test." );
+                current = null;
+                dependsBuf = null;
+                continue;
+            }
+
+            if (line.startsWith("Package:")) {
+                current = new AptPackage();
+                current.name = line.substring(8).trim();
+            } else if (line.startsWith("Depends:")) {
+                dependsBuf = line.substring(8).trim();
+            } else if (line.startsWith(" ") && dependsBuf != null) {
+                dependsBuf += " " + line.trim();
             }
         }
 
-        // filter may be present; no special validation needed other than length check
-        String filter = params.get("filter");
-        if (filter != null && filter.length() > 200) {
-            throw new IllegalArgumentException("Filter substring is too long (max 200 chars).");
+        if (current != null) {
+            if (dependsBuf != null) {
+                current.depends = parseDependencies(dependsBuf);
+            }
+            list.add(current);
         }
+        return list;
     }
 
-    private static void printUsage() {
-        String u = "Usage:\n"
-                + "  java -jar depviz-stage1.jar --package <name> --repo <url|path> [--test] [--filter <substring>]\n\n"
-                + "Options:\n"
-                + "  --package, -p   <name>      Name of the analyzed package (required)\n"
-                + "  --repo, -r      <url|path>  Repository URL or path to test repository (required)\n"
-                + "  --test, -t                   Enable test-repository mode. Can be used as a flag or with true/false.\n"
-                + "  --filter, -f    <substring> Substring to filter package names (optional)\n"
-                + "  --help, -h                   Show this help and exit.\n\n"
-                + "Examples:\n"
-                + "  java -jar depviz-stage1.jar -p libfoo -r https://example.com/ubuntu -f core\n"
-                + "  java -jar depviz-stage1.jar -p A -r /path/to/testrepo -t -f X\n";
-        System.out.println(u);
+    private static List<String> parseDependencies(String line) {
+        List<String> out = new ArrayList<>();
+        line = line.replace("\n", " ").replaceAll("\\s+", " ").trim();
+
+        if (line.isEmpty()) return out;
+
+        for (String part : line.split(",")) {
+            part = part.trim();
+            if (part.isEmpty()) continue;
+
+            part = part.replaceAll("\\(.*?\\)", "").trim();
+
+            if (part.contains("|")) {
+                for (String alt : part.split("\\|")) {
+                    alt = alt.trim();
+                    if (!alt.isEmpty() && !out.contains(alt)) {
+                        out.add(alt);
+                    }
+                }
+            } else if (!part.isEmpty() && !out.contains(part)) {
+                out.add(part);
+            }
+        }
+        return out;
+    }
+
+    private static void printTree(String pkg, Map<String, AptPackage> map, Set<String> visited, int depth, String filter) {
+        if (!filter.isEmpty() && !pkg.contains(filter)) {
+            return;
+        }
+
+        printIndent(depth);
+        System.out.println(pkg);
+
+        if (visited.contains(pkg)) {
+            printIndent(depth + 1);
+            System.out.println("(cyclic dependency)");
+            return;
+        }
+
+        AptPackage p = map.get(pkg);
+        if (p == null) {
+            printIndent(depth + 1);
+            System.out.println("(package not found)");
+            return;
+        }
+
+        visited.add(pkg);
+
+        for (String dep : p.depends) {
+            printTree(dep, map, new HashSet<>(visited), depth + 1, filter);
+        }
+
+        visited.remove(pkg);
+    }
+
+    private static void printIndent(int depth) {
+        for (int i = 0; i < depth; i++) {
+            if (i == depth - 1) {
+                System.out.print("└── ");
+            } else {
+                System.out.print("    ");
+            }
+        }
     }
 }

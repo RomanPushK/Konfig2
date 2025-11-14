@@ -1,0 +1,47 @@
+Package: A
+Version: 1
+Depends: B, C, D
+
+Package: B
+Version: 1
+Depends: E, F
+
+Package: C
+Version: 1
+Depends: G (>= 1.0), H
+
+Package: D
+Version: 1
+Depends: I, J, K, L
+
+Package: E
+Version: 1
+
+Package: F
+Version: 1
+Depends: M (>= 2.0)
+
+Package: G
+Version: 1
+
+Package: H
+Version: 1
+
+Package: I
+Version: 1
+
+Package: J
+Version: 1
+
+Package: K
+Version: 1
+Depends: N,
+
+Package: L
+Version: 1
+
+Package: M
+Version: 1
+
+Package: N
+Version: 1
