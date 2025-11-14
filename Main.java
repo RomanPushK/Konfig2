@@ -12,11 +12,6 @@ public class Main {
         Config cfg = parseArgs(args);
         if (cfg == null) return;
 
-        System.out.println("package=" + cfg.packageName);
-        System.out.println("repo=" + cfg.repo);
-        System.out.println("testMode=" + cfg.test);
-        System.out.println("filter=" + cfg.filter);
-
         try {
             List<AptPackage> packages = cfg.test
                     ? loadLocal(cfg.repo)
@@ -26,9 +21,9 @@ public class Main {
             for (AptPackage p : packages) map.put(p.name, p);
 
             System.out.println();
-            System.out.println("=== Dependency Tree ===");
-
-            printTree(cfg.packageName, map, new HashSet<>(), 0, cfg.filter);
+            Map<String, List<String>> bfsGraph =
+                    buildDependencyGraphBFS(cfg.packageName, map, cfg.filter);
+            printGraphAsTree(cfg.packageName, bfsGraph, new HashSet<>(), 0);
 
         } catch (Exception e) {
             System.err.println("Error: " + e.getMessage());
@@ -141,6 +136,51 @@ public class Main {
         return out;
     }
 
+    private static Map<String, List<String>> buildDependencyGraphBFS(
+            String root,
+            Map<String, AptPackage> repo,
+            String filter
+    ) {
+        Map<String, List<String>> graph = new HashMap<>();
+        Queue<String> queue = new LinkedList<>();
+        Set<String> visited = new HashSet<>();
+
+        queue.add(root);
+        visited.add(root);
+
+        while (!queue.isEmpty()) {
+            String current = queue.poll();
+
+            // Пропустить по фильтру
+            if (!filter.isEmpty() && current.contains(filter)) {
+                continue;
+            }
+
+            AptPackage pkg = repo.get(current);
+            if (pkg == null) {
+                graph.put(current, List.of("(package not found)"));
+                continue;
+            }
+
+            List<String> deps = pkg.depends;
+            graph.put(current, deps);
+
+            for (String dep : deps) {
+
+                // фильтр
+                if (!filter.isEmpty() && dep.contains(filter)) continue;
+
+                // циклы
+                if (!visited.contains(dep)) {
+                    visited.add(dep);
+                    queue.add(dep);
+                }
+            }
+        }
+
+        return graph;
+    }
+
     private static void printTree(String pkg, Map<String, AptPackage> map, Set<String> visited, int depth, String filter) {
         if (!filter.isEmpty() && !pkg.contains(filter)) {
             return;
@@ -178,6 +218,29 @@ public class Main {
             } else {
                 System.out.print("    ");
             }
+        }
+    }
+
+    private static void printGraphAsTree(
+            String root,
+            Map<String, List<String>> graph,
+            Set<String> visited,
+            int depth
+    ) {
+        printIndent(depth);
+        System.out.println(root);
+
+        if (visited.contains(root)) {
+            printIndent(depth + 1);
+            System.out.println("(cyclic)");
+            return;
+        }
+
+        visited.add(root);
+
+        List<String> deps = graph.getOrDefault(root, List.of());
+        for (String dep : deps) {
+            printGraphAsTree(dep, graph, new HashSet<>(visited), depth + 1);
         }
     }
 }
